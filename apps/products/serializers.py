@@ -1,7 +1,7 @@
 """Serializers for the products app."""
 
 from rest_framework import serializers
-from .models import Category, Product, ProductImage, Cart, CartItem
+from .models import Category, Product, ProductImage, Cart, CartItem, WishlistItem
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -12,6 +12,8 @@ class CategorySerializer(serializers.ModelSerializer):
         fields = ("id", "name", "slug", "description", "image", "is_active", "product_count")
 
     def get_product_count(self, obj):
+        if hasattr(obj, "active_product_count"):
+            return obj.active_product_count
         return obj.products.filter(status=Product.Status.ACTIVE).count()
 
 
@@ -35,7 +37,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             "id", "name", "slug", "short_description", "sku",
             "category", "category_name", "price", "compare_at_price",
             "discount_percentage", "stock", "is_in_stock", "status",
-            "is_featured", "primary_image", "created_at",
+            "is_featured", "primary_image", "subcategory", "tags", "created_at",
         )
 
     def get_primary_image(self, obj):
@@ -66,7 +68,8 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             "id", "name", "slug", "description", "short_description",
             "sku", "category", "category_id", "price", "compare_at_price",
             "discount_percentage", "stock", "is_in_stock", "weight",
-            "status", "is_featured", "tags", "images", "created_at", "updated_at",
+            "status", "is_featured", "tags", "subcategory", "details",
+            "care_instructions", "shipping_info", "images", "created_at", "updated_at",
         )
         read_only_fields = ("id", "slug", "created_at", "updated_at")
 
@@ -101,6 +104,8 @@ class CartItemSerializer(serializers.ModelSerializer):
         quantity = attrs.get("quantity", 1)
         try:
             product = Product.objects.get(id=product_id)
+            if product.status != Product.Status.ACTIVE:
+                raise serializers.ValidationError("Product is no longer available.")
             if quantity > product.stock:
                 raise serializers.ValidationError(
                     f"Only {product.stock} unit(s) available for '{product.name}'."
@@ -108,6 +113,10 @@ class CartItemSerializer(serializers.ModelSerializer):
         except Product.DoesNotExist:
             pass
         return attrs
+
+
+class CartQuantitySerializer(serializers.Serializer):
+    quantity = serializers.IntegerField(min_value=1)
 
 
 class CartSerializer(serializers.ModelSerializer):
@@ -126,3 +135,25 @@ class CartSerializer(serializers.ModelSerializer):
 
     def get_total_items(self, obj):
         return obj.total_items
+
+
+class WishlistItemSerializer(serializers.ModelSerializer):
+    product = ProductListSerializer(read_only=True)
+    product_id = serializers.UUIDField(write_only=True)
+
+    class Meta:
+        model = WishlistItem
+        fields = ("id", "product", "product_id", "created_at")
+        read_only_fields = ("id", "created_at")
+
+    def validate_product_id(self, value):
+        if not Product.objects.filter(pk=value, status=Product.Status.ACTIVE).exists():
+            raise serializers.ValidationError("Product not found or unavailable.")
+        return value
+
+    def create(self, validated_data):
+        customer = self.context["request"].user.customer_profile
+        item, _ = WishlistItem.objects.get_or_create(
+            customer=customer, product_id=validated_data["product_id"]
+        )
+        return item

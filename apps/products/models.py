@@ -55,6 +55,10 @@ class Product(models.Model):
     slug = models.SlugField(max_length=280, unique=True, blank=True)
     description = models.TextField()
     short_description = models.CharField(max_length=500, blank=True, default="")
+    care_instructions = models.TextField(blank=True, default="")
+    shipping_info = models.TextField(blank=True, default="")
+    details = models.JSONField(default=dict, blank=True)
+    subcategory = models.CharField(max_length=50, blank=True, default="", db_index=True)
     sku = models.CharField(max_length=100, unique=True)
     category = models.ForeignKey(
         Category, on_delete=models.SET_NULL, null=True, related_name="products"
@@ -155,6 +159,13 @@ class Cart(models.Model):
     class Meta:
         verbose_name = "Cart"
         verbose_name_plural = "Carts"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["session_key"],
+                condition=models.Q(session_key__isnull=False),
+                name="unique_session_shopping_cart",
+            )
+        ]
 
     def __str__(self):
         if self.customer:
@@ -196,3 +207,26 @@ class CartItem(models.Model):
             raise ValidationError(
                 f"Only {self.product.stock} units of '{self.product.name}' available."
             )
+
+
+class WishlistItem(models.Model):
+    """A product saved by a customer."""
+
+    customer = models.ForeignKey(
+        Customer, on_delete=models.CASCADE, related_name="wishlist_items"
+    )
+    product = models.ForeignKey(
+        Product, on_delete=models.CASCADE, related_name="wishlisted_by"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["customer", "product"], name="unique_customer_wishlist_product"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.customer.user.email}: {self.product.name}"

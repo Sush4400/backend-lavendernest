@@ -63,6 +63,19 @@ class TestCategoryAPI:
         response = api_client.post("/api/products/categories/", {"name": "Test"})
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
+    def test_inactive_category_is_staff_only(self, api_client, staff_user):
+        category = Category.objects.create(
+            name="Archived Decor",
+            slug="archived-decor",
+            is_active=False,
+        )
+        response = api_client.get(f"/api/products/categories/{category.slug}/")
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+        api_client.force_authenticate(user=staff_user)
+        response = api_client.get(f"/api/products/categories/{category.slug}/")
+        assert response.status_code == status.HTTP_200_OK
+
 
 @pytest.mark.django_db
 class TestProductAPI:

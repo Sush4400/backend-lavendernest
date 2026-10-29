@@ -5,7 +5,7 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import User, Customer, Address
+from .models import User, Customer, Address, NewsletterSubscriber, ContactMessage
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -19,6 +19,12 @@ class RegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ("email", "first_name", "last_name", "password", "password2")
+
+    def validate_email(self, value):
+        value = value.strip().lower()
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError("A user with this email already exists.")
+        return value
 
     def validate(self, attrs):
         if attrs["password"] != attrs["password2"]:
@@ -49,6 +55,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         return token
 
     def validate(self, attrs):
+        attrs["email"] = attrs["email"].strip().lower()
         data = super().validate(attrs)
         data["user"] = UserSerializer(self.user).data
         return data
@@ -63,6 +70,15 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ("id", "email", "first_name", "last_name", "full_name", "role", "date_joined")
         read_only_fields = ("id", "date_joined", "role")
+
+    def validate_email(self, value):
+        value = value.strip().lower()
+        users = User.objects.filter(email__iexact=value)
+        if self.instance:
+            users = users.exclude(pk=self.instance.pk)
+        if users.exists():
+            raise serializers.ValidationError("A user with this email already exists.")
+        return value
 
     def get_full_name(self, obj):
         return obj.full_name
@@ -100,6 +116,8 @@ class CustomerSerializer(serializers.ModelSerializer):
 class AddressSerializer(serializers.ModelSerializer):
     """Address serializer."""
 
+    phone_number = serializers.RegexField(r"^\+?\d{9,15}$", max_length=17)
+
     class Meta:
         model = Address
         fields = (
@@ -111,6 +129,20 @@ class AddressSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context.get("request")
-        customer = request.user.customer_profile
+        customer, _ = Customer.objects.get_or_create(user=request.user)
         validated_data["customer"] = customer
         return super().create(validated_data)
+
+
+class NewsletterSubscriptionSerializer(serializers.ModelSerializer):
+    email = serializers.EmailField(validators=[])
+
+    class Meta:
+        model = NewsletterSubscriber
+        fields = ("email",)
+
+
+class ContactMessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ContactMessage
+        fields = ("name", "email", "topic", "message")

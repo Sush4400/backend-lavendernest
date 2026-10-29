@@ -2,12 +2,14 @@
 
 import hashlib
 import hmac
+import json
 import logging
 from decimal import Decimal
 
 import razorpay
 from django.conf import settings
 from django.db import transaction
+from razorpay.errors import BadRequestError, GatewayError, ServerError
 
 from apps.orders.models import Order
 from .models import Payment
@@ -15,8 +17,14 @@ from .models import Payment
 logger = logging.getLogger(__name__)
 
 
+class PaymentGatewayError(Exception):
+    """Raised when Razorpay cannot verify or capture a payment."""
+
+
 def get_razorpay_client():
     """Return an authenticated Razorpay client."""
+    if not settings.RAZORPAY_KEY_ID or not settings.RAZORPAY_KEY_SECRET:
+        raise ValueError("Razorpay credentials are not configured.")
     return razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 
 
@@ -68,6 +76,8 @@ def verify_payment_signature(
     Verify the Razorpay payment signature using HMAC-SHA256.
     Returns True if the signature is valid.
     """
+    if not settings.RAZORPAY_KEY_SECRET:
+        return False
     body = f"{razorpay_order_id}|{razorpay_payment_id}"
     expected_signature = hmac.new(
         settings.RAZORPAY_KEY_SECRET.encode("utf-8"),
@@ -84,7 +94,7 @@ def capture_payment(
     razorpay_signature: str,
 ) -> Payment:
     """
-    Verify signature and mark payment as captured.
+    Verify the callback and confirm the gateway's payment state and amount.
     Updates Order payment_status to PAID.
     """
     try:
@@ -94,21 +104,69 @@ def capture_payment(
     except Payment.DoesNotExist:
         raise ValueError(f"No payment found for Razorpay order: {razorpay_order_id}")
 
+    if payment.provider != Payment.Provider.RAZORPAY:
+        raise ValueError("This payment was not created with Razorpay.")
     if not verify_payment_signature(razorpay_order_id, razorpay_payment_id, razorpay_signature):
-        payment.status = Payment.Status.FAILED
-        payment.save(update_fields=["status", "updated_at"])
         raise ValueError("Payment signature verification failed.")
+
+    order = Order.objects.select_for_update().get(pk=payment.order_id)
+    if order.status in (Order.Status.CANCELLED, Order.Status.REFUNDED):
+        raise ValueError("This order can no longer be paid.")
+
+    if (
+        payment.status == Payment.Status.CAPTURED
+        and payment.razorpay_payment_id != razorpay_payment_id
+    ):
+        raise ValueError("A different payment has already been captured for this order.")
+
+    client = get_razorpay_client()
+    expected_amount = int(payment.amount * 100)
+    try:
+        gateway_payment = client.payment.fetch(razorpay_payment_id)
+    except (BadRequestError, GatewayError, ServerError) as exc:
+        logger.exception("Razorpay payment lookup failed for order %s", order.order_number)
+        raise PaymentGatewayError("Payment gateway verification failed.") from exc
+    if (
+        gateway_payment.get("order_id") != razorpay_order_id
+        or gateway_payment.get("amount") != expected_amount
+        or gateway_payment.get("currency") != payment.currency
+    ):
+        raise ValueError("Payment details do not match the order.")
+
+    if gateway_payment.get("status") == "authorized":
+        try:
+            gateway_payment = client.payment.capture(
+                razorpay_payment_id,
+                expected_amount,
+                {"currency": payment.currency},
+            )
+        except (BadRequestError, GatewayError, ServerError) as exc:
+            logger.exception("Razorpay capture failed for order %s", order.order_number)
+            raise PaymentGatewayError("The payment could not be captured.") from exc
+    elif gateway_payment.get("status") != "captured":
+        raise ValueError("The payment has not been captured.")
+    if gateway_payment.get("status") != "captured":
+        raise ValueError("The payment could not be captured.")
 
     payment.razorpay_payment_id = razorpay_payment_id
     payment.razorpay_signature = razorpay_signature
     payment.status = Payment.Status.CAPTURED
-    payment.save(update_fields=["razorpay_payment_id", "razorpay_signature", "status", "updated_at"])
+    payment.gateway_response = gateway_payment
+    payment.save(update_fields=[
+        "razorpay_payment_id",
+        "razorpay_signature",
+        "status",
+        "gateway_response",
+        "updated_at",
+    ])
 
     # Update order payment and status
-    order = payment.order
     order.payment_status = Order.PaymentStatus.PAID
-    order.status = Order.Status.CONFIRMED
-    order.save(update_fields=["payment_status", "status", "updated_at"])
+    update_fields = ["payment_status", "updated_at"]
+    if order.status == Order.Status.PENDING:
+        order.status = Order.Status.CONFIRMED
+        update_fields.append("status")
+    order.save(update_fields=update_fields)
 
     logger.info(
         "Payment captured for order %s. Razorpay payment ID: %s",
@@ -118,40 +176,69 @@ def capture_payment(
     return payment
 
 
-def process_webhook(payload: dict, razorpay_signature: str) -> None:
+@transaction.atomic
+def process_webhook(
+    payload: dict,
+    razorpay_signature: str,
+    raw_body: str | None = None,
+) -> None:
     """
     Process Razorpay webhook events.
     Handles payment.captured and payment.failed events.
     """
-    import json
-    client = get_razorpay_client()
-
-    try:
-        client.utility.verify_webhook_signature(
-            json.dumps(payload, separators=(",", ":")),
-            razorpay_signature,
-            settings.RAZORPAY_KEY_SECRET,
-        )
-    except Exception:
+    if not settings.RAZORPAY_WEBHOOK_SECRET:
+        raise ValueError("Razorpay webhook secret is not configured.")
+    body = raw_body if raw_body is not None else json.dumps(payload, separators=(",", ":"))
+    expected_signature = hmac.new(
+        settings.RAZORPAY_WEBHOOK_SECRET.encode("utf-8"),
+        body.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected_signature, razorpay_signature):
         logger.warning("Webhook signature verification failed.")
         raise ValueError("Invalid webhook signature.")
 
+    if not isinstance(payload, dict):
+        raise ValueError("Webhook payload must be a JSON object.")
     event = payload.get("event")
-    payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+    event_payload = payload.get("payload", {})
+    payment_data = event_payload.get("payment", {}) if isinstance(event_payload, dict) else {}
+    payment_entity = payment_data.get("entity", {}) if isinstance(payment_data, dict) else {}
+    if event in ("payment.captured", "payment.failed") and not isinstance(payment_entity, dict):
+        raise ValueError("Webhook payment payload is invalid.")
 
     if event == "payment.captured":
         razorpay_payment_id = payment_entity.get("id")
         razorpay_order_id = payment_entity.get("order_id")
         try:
-            payment = Payment.objects.get(razorpay_order_id=razorpay_order_id)
+            payment = Payment.objects.select_for_update().select_related("order").get(
+                razorpay_order_id=razorpay_order_id,
+                provider=Payment.Provider.RAZORPAY,
+            )
+            if (
+                payment.status == Payment.Status.CAPTURED
+                and payment.razorpay_payment_id != razorpay_payment_id
+            ):
+                raise ValueError("A different payment has already been captured for this order.")
+            if (
+                payment_entity.get("amount") != int(payment.amount * 100)
+                or payment_entity.get("currency") != payment.currency
+            ):
+                logger.error("Webhook amount mismatch for Razorpay order %s", razorpay_order_id)
+                raise ValueError("Webhook payment details do not match the order.")
             payment.razorpay_payment_id = razorpay_payment_id
             payment.status = Payment.Status.CAPTURED
             payment.gateway_response = payload
-            payment.save()
+            payment.save(update_fields=[
+                "razorpay_payment_id", "status", "gateway_response", "updated_at"
+            ])
             order = payment.order
             order.payment_status = Order.PaymentStatus.PAID
-            order.status = Order.Status.CONFIRMED
-            order.save(update_fields=["payment_status", "status"])
+            update_fields = ["payment_status", "updated_at"]
+            if order.status == Order.Status.PENDING:
+                order.status = Order.Status.CONFIRMED
+                update_fields.append("status")
+            order.save(update_fields=update_fields)
             logger.info("Webhook: Payment captured for order %s", order.order_number)
         except Payment.DoesNotExist:
             logger.warning("Webhook: Payment not found for Razorpay order %s", razorpay_order_id)
@@ -159,10 +246,17 @@ def process_webhook(payload: dict, razorpay_signature: str) -> None:
     elif event == "payment.failed":
         razorpay_order_id = payment_entity.get("order_id")
         try:
-            payment = Payment.objects.get(razorpay_order_id=razorpay_order_id)
-            payment.status = Payment.Status.FAILED
-            payment.gateway_response = payload
-            payment.save()
-            logger.info("Webhook: Payment failed for order %s", payment.order.order_number)
+            payment = Payment.objects.select_for_update().select_related("order").get(
+                razorpay_order_id=razorpay_order_id,
+                provider=Payment.Provider.RAZORPAY,
+            )
+            if payment.status != Payment.Status.CAPTURED:
+                payment.status = Payment.Status.FAILED
+                payment.gateway_response = payload
+                payment.save(update_fields=["status", "gateway_response", "updated_at"])
+                if payment.order.payment_status != Order.PaymentStatus.PAID:
+                    payment.order.payment_status = Order.PaymentStatus.FAILED
+                    payment.order.save(update_fields=["payment_status", "updated_at"])
+                logger.info("Webhook: Payment failed for order %s", payment.order.order_number)
         except Payment.DoesNotExist:
-            pass
+            logger.warning("Webhook: Payment not found for Razorpay order %s", razorpay_order_id)

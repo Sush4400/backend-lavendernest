@@ -65,6 +65,20 @@ class TestUserRegistration:
         response = api_client.post("/api/auth/register/", data)
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_register_rejects_case_variant_of_existing_email(self, api_client, create_user):
+        create_user(email="existing@example.com")
+        response = api_client.post(
+            "/api/auth/register/",
+            {
+                "email": "EXISTING@example.com",
+                "first_name": "Duplicate",
+                "last_name": "User",
+                "password": "SecurePass123!",
+                "password2": "SecurePass123!",
+            },
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
 
 @pytest.mark.django_db
 class TestUserLogin:
@@ -77,6 +91,14 @@ class TestUserLogin:
         assert response.status_code == status.HTTP_200_OK
         assert "access" in response.data
         assert "refresh" in response.data
+
+    def test_login_normalizes_email_case(self, api_client, create_user):
+        create_user(email="login@test.com", password="TestPass123!")
+        response = api_client.post("/api/auth/login/", {
+            "email": "LOGIN@TEST.COM",
+            "password": "TestPass123!",
+        })
+        assert response.status_code == status.HTTP_200_OK
 
     def test_login_wrong_password(self, api_client, create_user):
         create_user(email="user@test.com", password="CorrectPass123!")

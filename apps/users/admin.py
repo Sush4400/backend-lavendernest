@@ -4,7 +4,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.translation import gettext_lazy as _
 
-from .models import User, Customer, Address
+from .models import User, Customer, Address, NewsletterSubscriber, ContactMessage
 
 
 @admin.register(User)
@@ -68,3 +68,25 @@ class AddressAdmin(admin.ModelAdmin):
     search_fields = ("full_name", "city", "state", "customer__user__email")
     list_filter = ("address_type", "is_default", "country", "state")
     readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(NewsletterSubscriber)
+class NewsletterSubscriberAdmin(admin.ModelAdmin):
+    list_display = ("email", "is_active", "created_at")
+    list_filter = ("is_active",)
+    search_fields = ("email",)
+    readonly_fields = ("created_at",)
+
+
+@admin.register(ContactMessage)
+class ContactMessageAdmin(admin.ModelAdmin):
+    list_display = ("name", "email", "topic", "created_at")
+    list_filter = ("topic", "created_at")
+    search_fields = ("name", "email", "message")
+    readonly_fields = ("name", "email", "topic", "message", "created_at")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser

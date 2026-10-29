@@ -4,6 +4,7 @@ import logging
 from rest_framework import status, generics, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.exceptions import ValidationError
 
 from apps.products.models import Product
 from apps.users.permissions import IsStaffOrAdmin
@@ -95,5 +96,10 @@ class LowStockView(generics.ListAPIView):
     permission_classes = [IsStaffOrAdmin]
 
     def get_queryset(self):
-        threshold = int(self.request.query_params.get("threshold", 5))
+        try:
+            threshold = int(self.request.query_params.get("threshold", 5))
+        except ValueError as exc:
+            raise ValidationError({"threshold": "Enter a whole number."}) from exc
+        if threshold < 0:
+            raise ValidationError({"threshold": "Ensure this value is greater than or equal to 0."})
         return get_low_stock_products(threshold)

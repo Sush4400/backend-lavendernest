@@ -17,6 +17,12 @@ urlpatterns = [
     path("cart/items/", views.CartItemView.as_view(), name="cart_items"),
     path("cart/items/<int:item_id>/", views.CartItemView.as_view(), name="cart_item_detail"),
     path("cart/clear/", views.CartItemView.as_view(), name="cart_clear"),
+    path("wishlist/", views.WishlistViewSet.as_view({"get": "list", "post": "create"}), name="wishlist"),
+    path(
+        "wishlist/<int:pk>/",
+        views.WishlistViewSet.as_view({"delete": "destroy"}),
+        name="wishlist_detail",
+    ),
     # Product/Category router
     path("", include(router.urls)),
 ]

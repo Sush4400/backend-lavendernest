@@ -10,9 +10,16 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.orders.models import Order
+from apps.users.models import Customer
 from .models import Payment
 from .serializers import PaymentSerializer, CreatePaymentSerializer, VerifyPaymentSerializer
-from .services import create_razorpay_order, capture_payment, process_webhook
+from .services import (
+    PaymentGatewayError,
+    create_razorpay_order,
+    capture_payment,
+    process_webhook,
+)
+from apps.users.permissions import IsCustomer
 
 logger = logging.getLogger(__name__)
 
@@ -20,17 +27,19 @@ logger = logging.getLogger(__name__)
 class CreatePaymentView(APIView):
     """Initiate a Razorpay payment order."""
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsCustomer]
 
     def post(self, request):
         serializer = CreatePaymentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        customer, _ = Customer.objects.get_or_create(user=request.user)
         try:
             order = Order.objects.get(
                 id=serializer.validated_data["order_id"],
-                customer=request.user.customer_profile,
+                customer=customer,
                 payment_status=Order.PaymentStatus.PENDING,
+                status__in=(Order.Status.PENDING, Order.Status.CONFIRMED),
             )
         except Order.DoesNotExist:
             return Response(
@@ -38,8 +47,19 @@ class CreatePaymentView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        if order.payment_method == Order.PaymentMethod.COD:
+            return Response(
+                {"error": "Cash on delivery orders do not need an online payment session."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         try:
             razorpay_order = create_razorpay_order(order)
+        except ValueError as e:
+            logger.warning("Payment gateway is unavailable: %s", e)
+            return Response(
+                {"error": "Online payment is not configured. Please contact the store."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         except Exception as e:
             logger.error("Razorpay order creation failed: %s", e)
             return Response(
@@ -59,11 +79,18 @@ class CreatePaymentView(APIView):
 class VerifyPaymentView(APIView):
     """Verify Razorpay payment after successful checkout."""
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsCustomer]
 
     def post(self, request):
         serializer = VerifyPaymentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
+        customer, _ = Customer.objects.get_or_create(user=request.user)
+        if not Payment.objects.filter(
+            razorpay_order_id=serializer.validated_data["razorpay_order_id"],
+            order__customer=customer,
+        ).exists():
+            return Response({"error": "Payment not found."}, status=status.HTTP_404_NOT_FOUND)
 
         try:
             payment = capture_payment(
@@ -73,6 +100,11 @@ class VerifyPaymentView(APIView):
             )
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except PaymentGatewayError as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
         return Response(PaymentSerializer(payment).data)
 
@@ -93,7 +125,11 @@ class RazorpayWebhookView(APIView):
             return Response({"error": "Invalid JSON."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            process_webhook(payload, razorpay_signature)
+            process_webhook(
+                payload,
+                razorpay_signature,
+                raw_body=request.body.decode("utf-8"),
+            )
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -103,13 +139,13 @@ class RazorpayWebhookView(APIView):
 class PaymentDetailView(APIView):
     """Retrieve payment details for an order."""
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsCustomer]
 
     def get(self, request, order_id):
         try:
             payment = Payment.objects.get(
                 order__id=order_id,
-                order__customer=request.user.customer_profile,
+                order__customer__user=request.user,
             )
         except Payment.DoesNotExist:
             return Response({"error": "Payment not found."}, status=status.HTTP_404_NOT_FOUND)

@@ -2,6 +2,7 @@
 
 import logging
 from django.conf import settings
+from django.db import transaction
 from apps.products.models import Product
 from .models import InventoryMovement
 
@@ -37,8 +38,10 @@ def record_inventory_deduction(product: Product, quantity: int, reference: str =
     return movement
 
 
+@transaction.atomic
 def add_stock(product: Product, quantity: int, reference: str = "") -> InventoryMovement:
     """Add stock to a product and record the movement."""
+    product = Product.objects.select_for_update().get(pk=product.pk)
     stock_before = product.stock
     product.stock += quantity
     product.save(update_fields=["stock", "updated_at"])
@@ -55,8 +58,10 @@ def add_stock(product: Product, quantity: int, reference: str = "") -> Inventory
     return movement
 
 
+@transaction.atomic
 def adjust_stock(product: Product, new_quantity: int, reference: str = "") -> InventoryMovement:
     """Manually adjust stock to a specific value."""
+    product = Product.objects.select_for_update().get(pk=product.pk)
     stock_before = product.stock
     quantity_change = new_quantity - stock_before
     product.stock = new_quantity
@@ -77,9 +82,9 @@ def adjust_stock(product: Product, new_quantity: int, reference: str = "") -> In
     return movement
 
 
-def get_low_stock_products(threshold: int = None):
+def get_low_stock_products(threshold: int | None = None):
     """Return all products below the low stock threshold."""
-    threshold = threshold or LOW_STOCK_THRESHOLD
+    threshold = LOW_STOCK_THRESHOLD if threshold is None else threshold
     return Product.objects.filter(
         stock__lte=threshold,
         status=Product.Status.ACTIVE,

@@ -2,6 +2,8 @@
 
 import logging
 from django.db import transaction
+from django.shortcuts import get_object_or_404
+from django.db.models import Count, Q
 from rest_framework import viewsets, status, generics, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -14,8 +16,12 @@ from .serializers import (
     ProductImageSerializer,
     CartSerializer,
     CartItemSerializer,
+    CartQuantitySerializer,
+    WishlistItemSerializer,
 )
 from .filters import ProductFilter
+from .services import get_cart_for_request
+from .models import WishlistItem
 from apps.users.permissions import IsStaffOrAdmin
 
 logger = logging.getLogger(__name__)
@@ -35,9 +41,22 @@ class CategoryViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        if self.action in ("list",):
+        if self.action in ("list", "retrieve") and not self._is_staff():
             qs = qs.filter(is_active=True)
+        if self.action == "list":
+            qs = qs.annotate(
+                active_product_count=Count(
+                    "products",
+                    filter=Q(products__status=Product.Status.ACTIVE),
+                )
+            ).order_by("name")
         return qs
+
+    def _is_staff(self):
+        return (
+            self.request.user.is_authenticated
+            and self.request.user.role in ("staff", "admin")
+        )
 
 
 class ProductViewSet(viewsets.ModelViewSet):
@@ -64,6 +83,16 @@ class ProductViewSet(viewsets.ModelViewSet):
         if self.action == "list":
             return ProductListSerializer
         return ProductDetailSerializer
+
+    def get_object(self):
+        """Accept both the product slug used by the storefront and the UUID API key."""
+        queryset = self.filter_queryset(self.get_queryset())
+        lookup_value = self.kwargs.get(self.lookup_url_kwarg or self.lookup_field)
+        obj = queryset.filter(slug=lookup_value).first()
+        if obj is None:
+            obj = get_object_or_404(queryset, pk=lookup_value)
+        self.check_object_permissions(self.request, obj)
+        return obj
 
     def get_permissions(self):
         if self.action in ("list", "retrieve"):
@@ -99,43 +128,44 @@ class ProductViewSet(viewsets.ModelViewSet):
 
 
 class CartView(generics.RetrieveAPIView):
-    """Retrieve the authenticated customer's cart."""
+    """Retrieve the current customer's or browser session's cart."""
 
     serializer_class = CartSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     def get_object(self):
-        cart, _ = Cart.objects.prefetch_related(
-            "items__product__images"
-        ).get_or_create(customer=self.request.user.customer_profile)
-        return cart
+        cart = get_cart_for_request(self.request)
+        return Cart.objects.prefetch_related("items__product__images").get(pk=cart.pk)
 
 
 class CartItemView(generics.GenericAPIView):
-    """Add, update quantity, or remove items from cart."""
+    """Add, update quantity, or remove items from the current cart."""
 
     serializer_class = CartItemSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     def get_cart(self):
-        cart, _ = Cart.objects.get_or_create(
-            customer=self.request.user.customer_profile
-        )
-        return cart
+        return get_cart_for_request(self.request)
 
     def post(self, request):
         """Add a product to cart or update quantity if already present."""
         serializer = CartItemSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        cart = self.get_cart()
-        product_id = serializer.validated_data["product_id"]
-        quantity = serializer.validated_data.get("quantity", 1)
-
         with transaction.atomic():
-            product = Product.objects.select_for_update().get(
-                id=product_id, status=Product.Status.ACTIVE
-            )
+            cart = self.get_cart()
+            cart = Cart.objects.select_for_update().get(pk=cart.pk)
+            product_id = serializer.validated_data["product_id"]
+            quantity = serializer.validated_data.get("quantity", 1)
+            try:
+                product = Product.objects.select_for_update().get(
+                    id=product_id, status=Product.Status.ACTIVE
+                )
+            except Product.DoesNotExist:
+                return Response(
+                    {"error": "Product not found or unavailable."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
             if quantity > product.stock:
                 return Response(
                     {"error": f"Only {product.stock} unit(s) available."},
@@ -163,38 +193,54 @@ class CartItemView(generics.GenericAPIView):
     def patch(self, request, item_id):
         """Update quantity of a specific cart item."""
         cart = self.get_cart()
-        try:
-            cart_item = CartItem.objects.select_for_update().get(id=item_id, cart=cart)
-        except CartItem.DoesNotExist:
-            return Response({"error": "Item not in cart."}, status=status.HTTP_404_NOT_FOUND)
-
-        quantity = request.data.get("quantity")
-        if not quantity or int(quantity) < 1:
-            return Response({"error": "Quantity must be ≥ 1."}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = CartQuantitySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        quantity = serializer.validated_data["quantity"]
 
         with transaction.atomic():
-            if int(quantity) > cart_item.product.stock:
+            Cart.objects.select_for_update().get(pk=cart.pk)
+            try:
+                cart_item = CartItem.objects.select_for_update().select_related("product").get(
+                    id=item_id, cart=cart
+                )
+            except CartItem.DoesNotExist:
+                return Response({"error": "Item not in cart."}, status=status.HTTP_404_NOT_FOUND)
+            if quantity > cart_item.product.stock:
                 return Response(
                     {"error": f"Only {cart_item.product.stock} unit(s) available."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            cart_item.quantity = int(quantity)
+            cart_item.quantity = quantity
             cart_item.save()
 
         return Response(CartItemSerializer(cart_item, context={"request": request}).data)
 
-    def delete(self, request, item_id):
+    def delete(self, request, item_id=None):
         """Remove an item from the cart."""
         cart = self.get_cart()
+        if item_id is None:
+            with transaction.atomic():
+                Cart.objects.select_for_update().get(pk=cart.pk)
+                cart.items.all().delete()
+            return Response({"message": "Cart cleared."})
         try:
             cart_item = CartItem.objects.get(id=item_id, cart=cart)
         except CartItem.DoesNotExist:
             return Response({"error": "Item not in cart."}, status=status.HTTP_404_NOT_FOUND)
-        cart_item.delete()
+        with transaction.atomic():
+            Cart.objects.select_for_update().get(pk=cart.pk)
+            cart_item.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    def delete_all(self, request):
-        """Clear all items from cart."""
-        cart = self.get_cart()
-        cart.items.all().delete()
-        return Response({"message": "Cart cleared."})
+class WishlistViewSet(viewsets.ModelViewSet):
+    """List, add, and remove products from the authenticated customer's wishlist."""
+
+    serializer_class = WishlistItemSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ["get", "post", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return WishlistItem.objects.filter(
+            customer__user=self.request.user,
+            product__status=Product.Status.ACTIVE,
+        ).select_related("product", "product__category").prefetch_related("product__images")

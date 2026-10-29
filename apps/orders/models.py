@@ -33,6 +33,17 @@ class Order(models.Model):
         REFUNDED = "refunded", "Refunded"
         PARTIALLY_REFUNDED = "partial_refund", "Partially Refunded"
 
+    class ShippingMethod(models.TextChoices):
+        STANDARD = "standard", "Standard Eco Delivery"
+        EXPRESS = "express", "Express Artisan Courier"
+
+    class PaymentMethod(models.TextChoices):
+        RAZORPAY = "razorpay", "Razorpay"
+        UPI = "upi", "UPI"
+        CARD = "card", "Credit / Debit Card"
+        NETBANKING = "netbanking", "Net Banking"
+        COD = "cod", "Cash on Delivery"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     order_number = models.CharField(
         max_length=20, unique=True, default=generate_order_number, editable=False
@@ -48,6 +59,13 @@ class Order(models.Model):
     payment_status = models.CharField(
         max_length=20, choices=PaymentStatus.choices, default=PaymentStatus.PENDING
     )
+    shipping_method = models.CharField(
+        max_length=20, choices=ShippingMethod.choices, default=ShippingMethod.STANDARD
+    )
+    payment_method = models.CharField(
+        max_length=20, choices=PaymentMethod.choices, default=PaymentMethod.RAZORPAY
+    )
+    coupon_code = models.CharField(max_length=30, blank=True, default="")
 
     # Shipping details snapshot
     shipping_full_name = models.CharField(max_length=255)
