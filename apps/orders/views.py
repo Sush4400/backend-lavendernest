@@ -35,7 +35,7 @@ class OrderViewSet(viewsets.GenericViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = Order.objects.prefetch_related("items__product__images").select_related("customer__user")
-        if user.role in ("staff", "admin"):
+        if user.role in ("staff", "admin") or user.is_staff or user.is_superuser:
             return qs.all()
         return qs.filter(customer__user=user)
 

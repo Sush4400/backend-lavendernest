@@ -22,4 +22,5 @@ urlpatterns = [
     path("me/addresses/<int:pk>/", views.AddressDetailView.as_view(), name="address_detail"),
     path("newsletter/subscribe/", views.NewsletterSubscriptionView.as_view(), name="newsletter_subscribe"),
     path("contact/", views.ContactMessageCreateView.as_view(), name="contact"),
+    path("admin/customers/", views.AdminCustomerListView.as_view(), name="admin_customer_list"),
 ]

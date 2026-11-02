@@ -59,7 +59,7 @@ class Product(models.Model):
     shipping_info = models.TextField(blank=True, default="")
     details = models.JSONField(default=dict, blank=True)
     subcategory = models.CharField(max_length=50, blank=True, default="", db_index=True)
-    sku = models.CharField(max_length=100, unique=True)
+    sku = models.CharField(max_length=100, unique=True, blank=True, help_text="Artisan SKU code. Leave blank to auto-generate (e.g. LN-CAN-9B2F10).")
     category = models.ForeignKey(
         Category, on_delete=models.SET_NULL, null=True, related_name="products"
     )
@@ -98,8 +98,11 @@ class Product(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.slug:
-            base_slug = slugify(self.name)
+            base_slug = slugify(self.name) or "item"
             self.slug = f"{base_slug}-{str(self.id)[:8]}"
+        if not self.sku:
+            cat_code = (self.category.slug[:3] if (self.category and self.category.slug) else "LAV").upper()
+            self.sku = f"LN-{cat_code}-{uuid.uuid4().hex[:6].upper()}"
         super().save(*args, **kwargs)
 
     @property

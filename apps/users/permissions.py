@@ -48,7 +48,11 @@ class IsStaffOrAdmin(BasePermission):
         return bool(
             request.user and
             request.user.is_authenticated and
-            request.user.role in (User.Role.STAFF, User.Role.ADMIN)
+            (
+                request.user.role in (User.Role.STAFF, User.Role.ADMIN)
+                or request.user.is_staff
+                or request.user.is_superuser
+            )
         )
 
 

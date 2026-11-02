@@ -22,7 +22,7 @@ from .serializers import (
     NewsletterSubscriptionSerializer,
     ContactMessageSerializer,
 )
-from .permissions import IsCustomer
+from .permissions import IsCustomer, IsStaffOrAdmin
 
 logger = logging.getLogger(__name__)
 
@@ -188,3 +188,31 @@ class ContactMessageCreateView(generics.CreateAPIView):
 
     serializer_class = ContactMessageSerializer
     permission_classes = [permissions.AllowAny]
+
+
+class AdminCustomerListView(APIView):
+    """Staff-only list of customers with order counts and spent totals."""
+
+    permission_classes = [permissions.IsAuthenticated, IsStaffOrAdmin]
+
+    def get(self, request):
+        customers = Customer.objects.select_related("user").prefetch_related("orders").all().order_by("-created_at")
+        results = []
+        for c in customers:
+            all_orders = c.orders.all()
+            paid_sum = sum(o.total_amount for o in all_orders if o.payment_status == "paid")
+            results.append({
+                "id": str(c.id),
+                "user_id": str(c.user.id),
+                "email": c.user.email,
+                "first_name": c.user.first_name,
+                "last_name": c.user.last_name,
+                "phone_number": c.phone_number,
+                "role": c.user.role,
+                "is_staff": c.user.is_staff,
+                "date_joined": c.user.date_joined,
+                "orders_count": all_orders.count(),
+                "total_spent": float(paid_sum),
+                "newsletter_subscribed": c.newsletter_subscribed,
+            })
+        return Response(results)

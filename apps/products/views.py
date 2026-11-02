@@ -55,7 +55,11 @@ class CategoryViewSet(viewsets.ModelViewSet):
     def _is_staff(self):
         return (
             self.request.user.is_authenticated
-            and self.request.user.role in ("staff", "admin")
+            and (
+                self.request.user.role in ("staff", "admin")
+                or self.request.user.is_staff
+                or self.request.user.is_superuser
+            )
         )
 
 
@@ -76,7 +80,11 @@ class ProductViewSet(viewsets.ModelViewSet):
     def _is_staff(self):
         return (
             self.request.user.is_authenticated
-            and self.request.user.role in ("staff", "admin")
+            and (
+                self.request.user.role in ("staff", "admin")
+                or self.request.user.is_staff
+                or self.request.user.is_superuser
+            )
         )
 
     def get_serializer_class(self):
@@ -98,6 +106,105 @@ class ProductViewSet(viewsets.ModelViewSet):
         if self.action in ("list", "retrieve"):
             return [permissions.AllowAny()]
         return [IsStaffOrAdmin()]
+
+    def perform_create(self, serializer):
+        product = serializer.save()
+        image_file = self.request.FILES.get("image")
+        if image_file:
+            ProductImage.objects.create(
+                product=product,
+                image=image_file,
+                is_primary=True,
+                alt_text=product.name,
+            )
+
+    @action(detail=False, methods=["get"], permission_classes=[IsStaffOrAdmin])
+    def stats(self, request):
+        """Admin metrics for the studio dashboard."""
+        import uuid
+        from django.db.models import Sum
+        from apps.orders.models import Order
+        from apps.orders.serializers import OrderSerializer
+        from apps.users.models import Customer
+
+        total_products = Product.objects.count()
+        active_products = Product.objects.filter(status=Product.Status.ACTIVE).count()
+        draft_products = Product.objects.filter(status=Product.Status.DRAFT).count()
+        low_stock_products = Product.objects.filter(stock__lte=5).select_related("category")
+        out_of_stock_count = Product.objects.filter(stock=0).count()
+        categories_count = Category.objects.count()
+
+        total_orders = Order.objects.count()
+        pending_orders = Order.objects.filter(status=Order.Status.PENDING).count()
+        confirmed_orders = Order.objects.filter(status=Order.Status.CONFIRMED).count()
+        shipped_orders = Order.objects.filter(status=Order.Status.SHIPPED).count()
+        delivered_orders = Order.objects.filter(status=Order.Status.DELIVERED).count()
+        revenue = Order.objects.filter(payment_status=Order.PaymentStatus.PAID).aggregate(Sum("total_amount"))["total_amount__sum"] or 0
+        customers_count = Customer.objects.count()
+        recent_orders = Order.objects.prefetch_related("items__product").select_related("customer__user").order_by("-created_at")[:6]
+
+        return Response({
+            "metrics": {
+                "total_products": total_products,
+                "active_products": active_products,
+                "draft_products": draft_products,
+                "low_stock_count": low_stock_products.count(),
+                "out_of_stock_count": out_of_stock_count,
+                "categories_count": categories_count,
+                "total_orders": total_orders,
+                "pending_orders": pending_orders,
+                "confirmed_orders": confirmed_orders,
+                "shipped_orders": shipped_orders,
+                "delivered_orders": delivered_orders,
+                "total_revenue": float(revenue),
+                "customers_count": customers_count,
+            },
+            "recent_orders": OrderSerializer(recent_orders, many=True).data,
+            "low_stock_items": ProductListSerializer(low_stock_products[:10], many=True, context={"request": request}).data,
+        })
+
+    @action(detail=True, methods=["post"], permission_classes=[IsStaffOrAdmin])
+    def restock(self, request, pk=None):
+        """Quickly add stock units to a product."""
+        product = self.get_object()
+        qty = int(request.data.get("quantity", 10))
+        product.stock += qty
+        product.save(update_fields=["stock", "updated_at"])
+        return Response(ProductDetailSerializer(product, context={"request": request}).data)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsStaffOrAdmin])
+    def duplicate(self, request, pk=None):
+        """Duplicate product into a new draft listing with clean SKU."""
+        import uuid
+        source = self.get_object()
+        cat_code = (source.category.slug[:3] if source.category and source.category.slug else "LAV").upper()
+        new_prod = Product.objects.create(
+            name=f"{source.name} (Copy)",
+            category=source.category,
+            subcategory=source.subcategory,
+            description=source.description,
+            short_description=source.short_description,
+            care_instructions=source.care_instructions,
+            shipping_info=source.shipping_info,
+            details=source.details,
+            sku=f"LN-{cat_code}-{uuid.uuid4().hex[:6].upper()}",
+            price=source.price,
+            compare_at_price=source.compare_at_price,
+            stock=source.stock,
+            weight=source.weight,
+            status=Product.Status.DRAFT,
+            is_featured=False,
+            tags=source.tags,
+        )
+        for img in source.images.all():
+            ProductImage.objects.create(
+                product=new_prod,
+                image=img.image,
+                alt_text=img.alt_text,
+                is_primary=img.is_primary,
+                sort_order=img.sort_order,
+            )
+        return Response(ProductDetailSerializer(new_prod, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["get"])
     def featured(self, request):
