@@ -121,3 +121,39 @@ class TestUserProfile:
     def test_get_profile_unauthenticated(self, api_client):
         response = api_client.get("/api/auth/me/")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_change_password_success(self, api_client, create_user):
+        user = create_user(email="changepw@test.com", password="OldPassword123!")
+        api_client.force_authenticate(user=user)
+        response = api_client.post("/api/auth/me/change-password/", {
+            "old_password": "OldPassword123!",
+            "new_password": "NewStrongPass2026!",
+            "new_password2": "NewStrongPass2026!",
+        })
+        assert response.status_code == status.HTTP_200_OK
+        assert "tokens" in response.data
+        user.refresh_from_db()
+        assert user.check_password("NewStrongPass2026!")
+
+    def test_change_password_wrong_old_password(self, api_client, create_user):
+        user = create_user(email="wrongpw@test.com", password="OldPassword123!")
+        api_client.force_authenticate(user=user)
+        response = api_client.post("/api/auth/me/change-password/", {
+            "old_password": "WrongPassword123!",
+            "new_password": "NewStrongPass2026!",
+            "new_password2": "NewStrongPass2026!",
+        })
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "error" in response.data
+
+    def test_change_password_accepts_aliases(self, api_client, create_user):
+        user = create_user(email="aliases@test.com", password="OldPassword123!")
+        api_client.force_authenticate(user=user)
+        response = api_client.post("/api/auth/me/change-password/", {
+            "current_password": "OldPassword123!",
+            "new_password": "NewStrongPass2026!",
+            "confirm_password": "NewStrongPass2026!",
+        })
+        assert response.status_code == status.HTTP_200_OK
+        user.refresh_from_db()
+        assert user.check_password("NewStrongPass2026!")

@@ -85,17 +85,54 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class ChangePasswordSerializer(serializers.Serializer):
-    """Serializer for password change."""
+    """Serializer for password change with alias tolerance and clear validation."""
 
-    old_password = serializers.CharField(required=True, write_only=True)
+    old_password = serializers.CharField(required=False, write_only=True)
     new_password = serializers.CharField(
-        required=True, write_only=True, validators=[validate_password]
+        required=False, write_only=True, validators=[validate_password]
     )
-    new_password2 = serializers.CharField(required=True, write_only=True)
+    new_password2 = serializers.CharField(required=False, write_only=True)
 
     def validate(self, attrs):
-        if attrs["new_password"] != attrs["new_password2"]:
+        initial = getattr(self, "initial_data", {}) or {}
+
+        # Accept field aliases: current_password -> old_password
+        old_pw = (
+            attrs.get("old_password")
+            or initial.get("old_password")
+            or initial.get("current_password")
+            or initial.get("oldPassword")
+        )
+        # Accept field aliases: new_password -> password / newPassword
+        new_pw = (
+            attrs.get("new_password")
+            or initial.get("new_password")
+            or initial.get("password")
+            or initial.get("newPassword")
+        )
+        # Accept field aliases: new_password2 -> confirm_password / confirmPassword / password2
+        new_pw2 = (
+            attrs.get("new_password2")
+            or initial.get("new_password2")
+            or initial.get("confirm_password")
+            or initial.get("confirmPassword")
+            or initial.get("new_password_confirm")
+            or initial.get("password2")
+        )
+
+        if not old_pw:
+            raise serializers.ValidationError({"old_password": "Current password is required."})
+        if not new_pw:
+            raise serializers.ValidationError({"new_password": "New password is required."})
+        if not new_pw2:
+            raise serializers.ValidationError({"new_password2": "Please confirm your new password."})
+
+        if new_pw != new_pw2:
             raise serializers.ValidationError({"new_password": "New passwords do not match."})
+
+        attrs["old_password"] = old_pw
+        attrs["new_password"] = new_pw
+        attrs["new_password2"] = new_pw2
         return attrs
 
 

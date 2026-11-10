@@ -1,0 +1,174 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static %}
+
+{% block title %}Sign In | LavenderNest Studio Portal{% endblock %}
+
+{% block extrastyle %}
+  {{ block.super }}
+  <link rel="stylesheet" href="{% static "admin/css/login.css" %}">
+{% endblock %}
+
+{% block bodyclass %}{{ block.super }} login ln-login-body{% endblock %}
+
+{% block usertools %}{% endblock %}
+{% block nav-global %}{% endblock %}
+{% block nav-sidebar %}{% endblock %}
+{% block content_title %}{% endblock %}
+{% block nav-breadcrumbs %}{% endblock %}
+
+{% block content %}
+<div class="ln-login-wrapper">
+  <div class="ln-login-card">
+    <!-- Brand Header -->
+    <div class="ln-login-header">
+      <div class="ln-login-badge">
+        <span class="ln-login-icon">🌿</span>
+        <span class="ln-login-brand">LavenderNest</span>
+      </div>
+      <div class="ln-login-title">Artisan Studio Admin</div>
+      <p class="ln-login-sub">Sign in with your staff credentials to manage the catalog, orders, and studio operations.</p>
+    </div>
+
+    <!-- Error Alerts -->
+    {% if form.errors and not form.non_field_errors %}
+      <div class="ln-login-alert error">
+        <span class="ln-alert-icon">⚠️</span>
+        <div>Please correct the errors in the fields below.</div>
+      </div>
+    {% endif %}
+
+    {% if form.non_field_errors %}
+      {% for error in form.non_field_errors %}
+        <div class="ln-login-alert error">
+          <span class="ln-alert-icon">⚠️</span>
+          <div>{{ error }}</div>
+        </div>
+      {% endfor %}
+    {% endif %}
+
+    {% if user.is_authenticated %}
+      <div class="ln-login-alert warning">
+        <span class="ln-alert-icon">🔒</span>
+        <div>You are authenticated as <strong>{{ username }}</strong>, but not authorized for staff access. Sign in with a staff account.</div>
+      </div>
+    {% endif %}
+
+    <!-- Login Form -->
+    <form action="{{ app_path }}" method="post" id="login-form" class="ln-login-form">
+      {% csrf_token %}
+
+      <div class="ln-field-group">
+        <label for="id_username" class="ln-field-label">
+          <span>Email Address</span>
+          <span class="ln-field-required">*</span>
+        </label>
+        <div class="ln-input-wrapper">
+          <span class="ln-input-icon">✉️</span>
+          <input
+            type="email"
+            name="username"
+            id="id_username"
+            class="ln-input-field"
+            autofocus
+            autocapitalize="none"
+            autocomplete="username"
+            maxlength="254"
+            required
+            placeholder="admin@lavendernest.in"
+            value="{{ form.username.value|default:'' }}"
+          >
+        </div>
+        {% if form.username.errors %}
+          <div class="ln-field-error">{{ form.username.errors.0 }}</div>
+        {% endif %}
+      </div>
+
+      <div class="ln-field-group">
+        <div class="ln-field-label-row">
+          <label for="id_password" class="ln-field-label">
+            <span>Password</span>
+            <span class="ln-field-required">*</span>
+          </label>
+          <button type="button" class="ln-toggle-password" id="togglePasswordBtn" aria-label="Toggle password visibility">
+            <span id="togglePasswordIcon">👁️</span> Show
+          </button>
+        </div>
+        <div class="ln-input-wrapper">
+          <span class="ln-input-icon">🔑</span>
+          <input
+            type="password"
+            name="password"
+            id="id_password"
+            class="ln-input-field"
+            autocomplete="current-password"
+            required
+            placeholder="••••••••••••"
+          >
+        </div>
+        {% if form.password.errors %}
+          <div class="ln-field-error">{{ form.password.errors.0 }}</div>
+        {% endif %}
+      </div>
+
+      <input type="hidden" name="next" value="{{ next|default:'/admin/' }}">
+
+      <div class="ln-submit-wrapper">
+        <button type="submit" class="ln-submit-btn">
+          <span>Sign In to Studio</span>
+          <span class="ln-btn-arrow">→</span>
+        </button>
+      </div>
+    </form>
+
+    <!-- Quick 1-Click Fill Helper for Local / Dev Admin -->
+    <div class="ln-demo-credentials">
+      <div class="ln-demo-title">
+        <span>⚡ Quick Fill Demo Accounts</span>
+      </div>
+      <div class="ln-demo-pills">
+        <button type="button" class="ln-demo-pill" onclick="fillCredentials('admin@lavendernest.in', 'AdminPass123!')">
+          <span class="ln-pill-role">Primary Superuser</span>
+          <span class="ln-pill-email">admin@lavendernest.in</span>
+        </button>
+        <button type="button" class="ln-demo-pill" onclick="fillCredentials('admin@lavendernest.com', 'admin12345')">
+          <span class="ln-pill-role">Dev Superuser</span>
+          <span class="ln-pill-email">admin@lavendernest.com</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Storefront Footer Link -->
+    <div class="ln-login-footer">
+      <a href="/" class="ln-storefront-link">
+        ← Return to LavenderNest Storefront
+      </a>
+    </div>
+  </div>
+</div>
+
+<script>
+  function fillCredentials(email, pass) {
+    var userField = document.getElementById('id_username');
+    var passField = document.getElementById('id_password');
+    if (userField && passField) {
+      userField.value = email;
+      passField.value = pass;
+      passField.focus();
+    }
+  }
+
+  var toggleBtn = document.getElementById('togglePasswordBtn');
+  var passField = document.getElementById('id_password');
+  if (toggleBtn && passField) {
+    toggleBtn.addEventListener('click', function() {
+      if (passField.type === 'password') {
+        passField.type = 'text';
+        toggleBtn.innerHTML = '<span>🙈</span> Hide';
+      } else {
+        passField.type = 'password';
+        toggleBtn.innerHTML = '<span>👁️</span> Show';
+      }
+    });
+  }
+</script>
+{% endblock %}

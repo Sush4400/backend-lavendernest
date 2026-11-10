@@ -116,14 +116,29 @@ class ChangePasswordView(APIView):
         user = request.user
         if not user.check_password(serializer.validated_data["old_password"]):
             return Response(
-                {"error": "Incorrect current password."},
+                {
+                    "error": "Incorrect current password.",
+                    "detail": "Incorrect current password.",
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         user.set_password(serializer.validated_data["new_password"])
         user.save()
         logger.info("Password changed for user: %s", user.email)
-        return Response({"message": "Password updated successfully."})
+
+        # Generate fresh JWT tokens so the active session stays in sync
+        refresh = RefreshToken.for_user(user)
+        return Response(
+            {
+                "message": "Password updated successfully.",
+                "tokens": {
+                    "access": str(refresh.access_token),
+                    "refresh": str(refresh),
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class CustomerProfileView(generics.RetrieveUpdateAPIView):

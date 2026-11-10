@@ -1,0 +1,81 @@
+{% extends "admin/base_site.html" %}
+{% load i18n l10n %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label='products' %}">Products</a>
+  &rsaquo; <a href="{% url 'admin:products_product_changelist' %}">Products</a>
+  &rsaquo; Assign to Product Group
+</div>
+{% endblock %}
+
+{% block content %}
+<div style="max-width: 860px; margin: 0 auto; padding: 20px 0;">
+  <div style="background: white; border-radius: 12px; border: 1px solid #e2d1e7; padding: 28px; box-shadow: 0 4px 20px rgba(78, 42, 94, 0.06);">
+    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 18px;">
+      <div style="width: 44px; height: 44px; border-radius: 50%; background: #f3e8f8; display: grid; place-items: center; font-size: 20px;">
+        📦
+      </div>
+      <div>
+        <h2 style="margin: 0; color: #321e3f; font-family: 'Playfair Display', Georgia, serif; font-size: 22px;">Assign Selected Products to a Group</h2>
+        <p style="margin: 4px 0 0; color: #7a6a84; font-size: 13px;">Organize handcrafted items into a curated collection or showcase group.</p>
+      </div>
+    </div>
+
+    {% if groups %}
+    <form method="post" action="">
+      {% csrf_token %}
+
+      <div style="margin: 22px 0; padding: 18px; background: #faf6fc; border: 1px solid #ebddee; border-radius: 8px;">
+        <label for="target_group" style="display: block; font-weight: 600; font-size: 13px; color: #381f47; margin-bottom: 8px;">
+          Select Destination Product Group:
+        </label>
+        <select name="target_group" id="target_group" required style="width: 100%; max-width: 420px; padding: 10px 14px; border: 1.5px solid #c9a8db; border-radius: 6px; font-size: 13px; background: white;">
+          <option value="">-- Choose an active Product Group --</option>
+          {% for g in groups %}
+          <option value="{{ g.id }}">{{ g.name }} ({{ g.products.count }} current products){% if g.badge_text %} — [{{ g.badge_text }}]{% endif %}</option>
+          {% endfor %}
+        </select>
+        <div style="margin-top: 8px; font-size: 11.5px; color: #7f6e8c;">
+          Need a new group? <a href="{% url 'admin:products_productgroup_add' %}" target="_blank" style="color: #6b3582; font-weight: 600;">+ Create a new Product Group ↗</a>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 24px;">
+        <h3 style="font-size: 14px; color: #321e3f; margin-bottom: 10px; font-weight: 600;">Selected Products ({{ products.count }}):</h3>
+        <ul style="max-height: 220px; overflow-y: auto; background: #fdfafd; border: 1px solid #ebddee; border-radius: 8px; padding: 10px 24px; margin: 0; font-size: 13px; color: #493b52;">
+          {% for p in products %}
+          <li style="padding: 4px 0;">
+            <strong>{{ p.name }}</strong> <span style="color:#888; font-size:11px;">(SKU: {{ p.sku }})</span> — ₹{{ p.price }}
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+
+      {% for p in products %}
+      <input type="hidden" name="{{ action_checkbox_name }}" value="{{ p.pk|unlocalize }}" />
+      {% endfor %}
+      <input type="hidden" name="action" value="assign_to_group" />
+
+      <div style="display: flex; gap: 12px; align-items: center; padding-top: 16px; border-top: 1px solid #eee;">
+        <button type="submit" name="apply" value="1" style="background: linear-gradient(135deg, #8a4fb5 0%, #683492 100%); color: white; border: none; padding: 11px 24px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 13px; box-shadow: 0 4px 12px rgba(109, 53, 130, 0.25);">
+          ✓ Confirm & Assign to Group
+        </button>
+        <a href="{% url 'admin:products_product_changelist' %}" style="padding: 10px 18px; border: 1px solid #cbb2d6; border-radius: 8px; color: #5a4b63; text-decoration: none; font-size: 13px;">
+          Cancel
+        </a>
+      </div>
+    </form>
+    {% else %}
+    <div style="padding: 24px; text-align: center; background: #faf6fc; border-radius: 8px; border: 1px dashed #c9a8db;">
+      <p style="color: #5a4b63; font-size: 14px; margin-bottom: 14px;">No active Product Groups exist yet. Create a group first before assigning products.</p>
+      <a href="{% url 'admin:products_productgroup_add' %}" style="background: #8a4fb5; color: white; padding: 9px 20px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 13px;">
+        + Create First Product Group
+      </a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
