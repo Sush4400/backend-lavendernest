@@ -71,7 +71,6 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
-                "apps.products.context_processors.admin_studio_metrics",
             ],
         },
     },
@@ -99,7 +98,6 @@ USE_TZ = True
 # Static files
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_DIRS = [BASE_DIR / "static"]
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 # Media files
@@ -148,11 +146,6 @@ SIMPLE_JWT = {
     "USER_ID_FIELD": "id",
     "USER_ID_CLAIM": "user_id",
 }
-
-# Authentication redirects
-LOGIN_REDIRECT_URL = "/admin/"
-LOGIN_URL = "/admin/login/"
-LOGOUT_REDIRECT_URL = "/admin/login/"
 
 # CORS settings
 CORS_ALLOWED_ORIGINS = os.getenv(

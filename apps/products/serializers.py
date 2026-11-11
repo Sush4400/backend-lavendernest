@@ -45,19 +45,19 @@ class CategorySerializer(serializers.ModelSerializer):
             return obj.active_product_count
         return obj.products.filter(status=Product.Status.ACTIVE).count()
 
-    def to_representation(self, instance):
-        ret = super().to_representation(instance)
-        if not ret.get("image"):
-            defaults = {
-                "candles": "https://images.unsplash.com/photo-1603006905003-be475563bc59?auto=format&fit=crop&w=800&q=80",
-                "pipe-cleaner-flowers": "https://images.unsplash.com/photo-1563241527-3004b7be0ffd?auto=format&fit=crop&w=800&q=80",
-                "light-bottles": "https://images.unsplash.com/photo-1517457373958-b7bdd4587205?auto=format&fit=crop&w=800&q=80",
-            }
-            ret["image"] = defaults.get(
-                instance.slug,
-                "https://images.unsplash.com/photo-1603006905003-be475563bc59?auto=format&fit=crop&w=800&q=80"
-            )
-        return ret
+    # def to_representation(self, instance):
+    #     ret = super().to_representation(instance)
+    #     if not ret.get("image"):
+    #         defaults = {
+    #             "candles": "https://images.unsplash.com/photo-1603006905003-be475563bc59?auto=format&fit=crop&w=800&q=80",
+    #             "pipe-cleaner-flowers": "https://images.unsplash.com/photo-1563241527-3004b7be0ffd?auto=format&fit=crop&w=800&q=80",
+    #             "light-bottles": "https://images.unsplash.com/photo-1517457373958-b7bdd4587205?auto=format&fit=crop&w=800&q=80",
+    #         }
+    #         ret["image"] = defaults.get(
+    #             instance.slug,
+    #             "https://images.unsplash.com/photo-1603006905003-be475563bc59?auto=format&fit=crop&w=800&q=80"
+    #         )
+    #     return ret
 
 
 class ProductImageSerializer(serializers.ModelSerializer):
@@ -134,15 +134,15 @@ class ProductDetailSerializer(serializers.ModelSerializer):
     def get_discount_percentage(self, obj):
         return obj.discount_percentage
 
-    def to_representation(self, instance):
-        ret = super().to_representation(instance)
-        if not ret.get("images"):
-            primary = ret.get("primary_image")
-            if primary:
-                ret["images"] = [
-                    {"id": 1, "image": primary, "alt_text": instance.name, "is_primary": True, "sort_order": 0}
-                ]
-        return ret
+    # def to_representation(self, instance):
+    #     ret = super().to_representation(instance)
+    #     if not ret.get("images"):
+    #         primary = ret.get("primary_image")
+    #         if primary:
+    #             ret["images"] = [
+    #                 {"id": 1, "image": primary, "alt_text": instance.name, "is_primary": True, "sort_order": 0}
+    #             ]
+    #     return ret
 
 
 class CartItemSerializer(serializers.ModelSerializer):

@@ -23,6 +23,7 @@ urlpatterns = [
         views.WishlistViewSet.as_view({"delete": "destroy"}),
         name="wishlist_detail",
     ),
+
     # Product/Category router
     path("", include(router.urls)),
 ]

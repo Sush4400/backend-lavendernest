@@ -13,10 +13,6 @@ def category_image_path(instance, filename):
     return f"categories/{instance.slug}/{filename}"
 
 
-def group_image_path(instance, filename):
-    return f"groups/{instance.slug}/{filename}"
-
-
 def product_image_path(instance, filename):
     return f"products/{instance.product.slug}/{filename}"
 
@@ -46,39 +42,12 @@ class Category(models.Model):
         super().save(*args, **kwargs)
 
 
-class ProductGroup(models.Model):
-    """
-    Curated product groups/collections (e.g. 'Artisan Gift Boxes', 'Spring Pastels', 'Best Sellers').
-    Enables admins to bundle, feature, and organize products together.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=150, unique=True, help_text="Group / Collection display name")
-    slug = models.SlugField(max_length=180, unique=True, blank=True)
-    description = models.TextField(blank=True, default="", help_text="Artisan story or description for this collection")
-    badge_text = models.CharField(max_length=50, blank=True, default="", help_text="Optional badge, e.g. 'Handmade Choice', 'Limited Edition', 'Best Seller'")
-    image = models.ImageField(upload_to=group_image_path, null=True, blank=True, help_text="Cover banner image for this group")
-    is_active = models.BooleanField(default=True, db_index=True)
-    sort_order = models.PositiveIntegerField(default=0, help_text="Ordering index for displays")
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        verbose_name = "Product Group"
-        verbose_name_plural = "Product Groups"
-        ordering = ["sort_order", "name"]
+class Tag(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    slug = models.SlugField(max_length=120, unique=True)
 
     def __str__(self):
         return self.name
-
-    def save(self, *args, **kwargs):
-        if not self.slug:
-            self.slug = slugify(self.name)
-        super().save(*args, **kwargs)
-
-    @property
-    def product_count(self):
-        return self.products.count()
 
 
 class Product(models.Model):
@@ -94,19 +63,12 @@ class Product(models.Model):
     slug = models.SlugField(max_length=280, unique=True, blank=True)
     description = models.TextField()
     short_description = models.CharField(max_length=500, blank=True, default="")
-    care_instructions = models.TextField(blank=True, default="")
-    shipping_info = models.TextField(blank=True, default="")
+    # shipping_info = models.TextField(blank=True, default="")
     details = models.JSONField(default=dict, blank=True)
     subcategory = models.CharField(max_length=50, blank=True, default="", db_index=True)
     sku = models.CharField(max_length=100, unique=True, blank=True, help_text="Artisan SKU code. Leave blank to auto-generate (e.g. LN-CAN-9B2F10).")
     category = models.ForeignKey(
         Category, on_delete=models.SET_NULL, null=True, related_name="products"
-    )
-    groups = models.ManyToManyField(
-        ProductGroup,
-        related_name="products",
-        blank=True,
-        help_text="Assign this product to one or more curated groups/collections."
     )
     price = models.DecimalField(
         max_digits=10, decimal_places=2, validators=[MinValueValidator(0)]
@@ -123,7 +85,7 @@ class Product(models.Model):
     )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     is_featured = models.BooleanField(default=False)
-    tags = models.CharField(max_length=500, blank=True, default="", help_text="Comma-separated tags")
+    tags = models.ManyToManyField(Tag, blank=True, related_name="products")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
